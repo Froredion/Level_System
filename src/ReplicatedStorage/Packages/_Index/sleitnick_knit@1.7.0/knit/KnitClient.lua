@@ -115,6 +115,7 @@ KnitClient.Util = (script.Parent :: Instance).Parent
 local Promise = require(KnitClient.Util.Promise)
 local Comm = require(KnitClient.Util.Comm)
 local ClientComm = Comm.ClientComm
+local KnitErrorHelper = require(script.Parent.KnitErrorHelper)
 
 local controllers: { [string]: Controller } = {}
 local services: { [string]: Service } = {}
@@ -132,7 +133,20 @@ end
 
 local function GetServicesFolder()
 	if not servicesFolder then
-		servicesFolder = (script.Parent :: Instance):WaitForChild("Services")
+		servicesFolder = (script.Parent :: Instance):WaitForChild("Services", 30)
+		if not servicesFolder then
+			error(
+				"\n━━━━━━━━━━━━━━━━━━━━\n"
+					.. "❌ Knit Error: Services folder not found\n"
+					.. "━━━━━━━━━━━━━━━━━━━━\n"
+					.. "The server has not finished initializing yet.\n"
+					.. "\n"
+					.. "Most common cause:\n"
+					.. "⚠️  A KnitInit error occurred on the server\n"
+					.. "    Check the server console for KnitInit errors above.\n"
+					.. "━━━━━━━━━━━━━━━━━━━━"
+			)
+		end
 	end
 
 	return servicesFolder
@@ -288,7 +302,7 @@ function KnitClient.GetService(serviceName: string): Service
 		return service
 	end
 
-	assert(started, "Cannot call GetService until Knit has been started")
+	assert(started, KnitErrorHelper.GetStartErrorMessage(started, "GetService", controllers, true)) -- true = client-side
 	assert(type(serviceName) == "string", `ServiceName must be a string; got {type(serviceName)}`)
 
 	return BuildService(serviceName)
@@ -304,7 +318,7 @@ function KnitClient.GetController(controllerName: string): Controller
 		return controller
 	end
 
-	assert(started, "Cannot call GetController until Knit has been started")
+	assert(started, KnitErrorHelper.GetStartErrorMessage(started, "GetController", controllers, true)) -- true = client-side
 	assert(type(controllerName) == "string", `ControllerName must be a string; got {type(controllerName)}`)
 	error(`Could not find controller "{controllerName}". Check to verify a controller with this name exists.`, 2)
 end
@@ -313,7 +327,7 @@ end
 	Gets a table of all controllers.
 ]=]
 function KnitClient.GetControllers(): { [string]: Controller }
-	assert(started, "Cannot call GetControllers until Knit has been started")
+	assert(started, KnitErrorHelper.GetStartErrorMessage(started, "GetControllers", controllers, true)) -- true = client-side
 
 	return controllers
 end
@@ -367,10 +381,19 @@ function KnitClient.Start(options: KnitOptions?)
 			if type(controller.KnitInit) == "function" then
 				table.insert(
 					promisesStartControllers,
-					Promise.new(function(r)
+					Promise.new(function(r, reject)
 						debug.setmemorycategory(controller.Name)
-						controller:KnitInit()
-						r()
+						local success, err = pcall(function()
+							controller:KnitInit()
+						end)
+						if success then
+							r()
+						else
+							-- Get the source path using debug.info
+							local source = debug.info(controller.KnitInit, "s")
+							local controllerPath = source:match("^@?(.+)$") or controller.Name
+							reject(string.format("", controller.Name, controllerPath, tostring(err)))
+						end
 					end)
 				)
 			end

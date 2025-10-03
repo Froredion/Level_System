@@ -140,6 +140,7 @@ knitRepServiceFolder.Name = "Services"
 local Promise = require(KnitServer.Util.Promise)
 local Comm = require(KnitServer.Util.Comm)
 local ServerComm = Comm.ServerComm
+local KnitErrorHelper = require(script.Parent.KnitErrorHelper)
 
 local services: { [string]: Service } = {}
 local started = false
@@ -248,7 +249,7 @@ end
 	Gets the service by name. Throws an error if the service is not found.
 ]=]
 function KnitServer.GetService(serviceName: string): Service
-	assert(started, "Cannot call GetService until Knit has been started")
+	assert(started, KnitErrorHelper.GetStartErrorMessage(started, "GetService", services, false))
 	assert(type(serviceName) == "string", `ServiceName must be a string; got {type(serviceName)}`)
 
 	return assert(services[serviceName], `Could not find service "{serviceName}"`) :: Service
@@ -258,7 +259,7 @@ end
 	Gets a table of all services.
 ]=]
 function KnitServer.GetServices(): { [string]: Service }
-	assert(started, "Cannot call GetServices until Knit has been started")
+	assert(started, KnitErrorHelper.GetStartErrorMessage(started, "GetServices", services, false))
 
 	return services
 end
@@ -432,10 +433,32 @@ function KnitServer.Start(options: KnitOptions?)
 			if type(service.KnitInit) == "function" then
 				table.insert(
 					promisesInitServices,
-					Promise.new(function(r)
+					Promise.new(function(r, reject)
 						debug.setmemorycategory(service.Name)
-						service:KnitInit()
-						r()
+						local success, err = pcall(function()
+							service:KnitInit()
+						end)
+						if success then
+							r()
+						else
+							-- Get the source path using debug.info
+							local source = debug.info(service.KnitInit, "s")
+							local servicePath = source:match("^@?(.+)$") or service.Name
+							reject(
+								string.format(
+									"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+										.. "❌ KnitInit Error in Service: %s\n"
+										.. "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+										.. "Service Path: %s\n"
+										.. "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+										.. "Error: %s\n"
+										.. "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+									service.Name,
+									servicePath,
+									tostring(err)
+								)
+							)
+						end
 					end)
 				)
 			end
